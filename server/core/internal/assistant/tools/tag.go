@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/guregu/null/v5"
+	"github.com/oxynote/oxynote/server/core/internal/org"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
 	"github.com/rs/xid"
 )
@@ -25,7 +26,7 @@ type listTags struct{}
 func (listTags) Info() Info {
 	return Info{
 		Name:        NameListTags,
-		Traits:      Traits{Group: GroupTags},
+		Traits:      Traits{Group: GroupTags, Role: org.RoleViewer},
 		Description: "List the organisation's tags in sidebar order as [{id, name, color, documents}]. Documents are the documents whose default branch carries the tag; a tag on another branch shows only on get_document for that branch.",
 		Properties:  map[string]any{},
 	}
@@ -137,7 +138,7 @@ type createTag struct{}
 func (createTag) Info() Info {
 	return Info{
 		Name:        NameCreateTag,
-		Traits:      Traits{Group: GroupTags, Write: true},
+		Traits:      Traits{Group: GroupTags, Write: true, Role: org.RoleEditor},
 		Description: "Create a tag and return {tag_id}. The name has to be unused in the organisation. The tag lands last in the sidebar order; update_tag moves it and set_tag_assignment puts it on a document.",
 		Properties: map[string]any{
 			"name":  map[string]any{"type": "string", "description": "The display name."},
@@ -270,7 +271,7 @@ type updateTag struct{}
 func (updateTag) Info() Info {
 	return Info{
 		Name:        NameUpdateTag,
-		Traits:      Traits{Group: GroupTags, Write: true, Idempotent: true},
+		Traits:      Traits{Group: GroupTags, Write: true, Idempotent: true, Role: org.RoleEditor},
 		Description: "Rename, recolour or move a tag in the sidebar order; give only what changes, and a call changing nothing is refused. A new name has to be unused in the organisation. Returns {tag_id} with what changed. set_tag_assignment changes which documents carry it.",
 		Properties: map[string]any{
 			"tag_id":     map[string]any{"type": "string", "description": _tagIDDescription},
@@ -381,7 +382,7 @@ type deleteTag struct{}
 func (deleteTag) Info() Info {
 	return Info{
 		Name:        NameDeleteTag,
-		Traits:      Traits{Group: GroupTags, Write: true, Destructive: true},
+		Traits:      Traits{Group: GroupTags, Write: true, Destructive: true, Role: org.RoleEditor},
 		Description: "Delete a tag. Every document loses it, on every branch, and it cannot be restored; set_tag_assignment takes it off one document instead. Returns {tag_id, deleted}.",
 		Properties: map[string]any{
 			"tag_id": map[string]any{"type": "string", "description": _tagIDDescription},
@@ -481,7 +482,7 @@ type setTagAssignment struct{}
 func (setTagAssignment) Info() Info {
 	return Info{
 		Name:        NameSetTagAssignment,
-		Traits:      Traits{Group: GroupTags, Write: true, Idempotent: true},
+		Traits:      Traits{Group: GroupTags, Write: true, Idempotent: true, Role: org.RoleEditor},
 		Description: "Put a tag on one branch of a document, or take it off. The document is listed under the tag in the sidebar while its default branch carries it. Setting what is already the case succeeds and changes nothing; delete_tag removes a tag everywhere. Returns {document_id, branch_id, tag_id, assigned}.",
 		Properties: map[string]any{
 			"document_id": map[string]any{"type": "string", "description": _documentIDDescription},

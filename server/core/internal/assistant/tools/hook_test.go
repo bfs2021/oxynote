@@ -14,6 +14,7 @@ import (
 	"github.com/oxynote/oxynote/server/core/internal/document"
 	"github.com/oxynote/oxynote/server/core/internal/document/hook"
 	"github.com/oxynote/oxynote/server/core/internal/document/hook/processor"
+	"github.com/oxynote/oxynote/server/core/internal/org"
 	"github.com/oxynote/oxynote/server/core/pkg/testutil"
 	"github.com/rs/xid"
 	"github.com/stretchr/testify/assert"
@@ -295,7 +296,7 @@ func Test_listHooks_Info(t *testing.T) {
 
 	info := listHooks{}.Info()
 
-	assert.Equal(t, Traits{Group: GroupHooks}, info.Traits)
+	assert.Equal(t, Traits{Group: GroupHooks, Role: org.RoleViewer}, info.Traits)
 
 	assert.Equal(t, NameListHooks, info.Name)
 	assert.NotEmpty(t, info.Description)
@@ -458,7 +459,7 @@ func Test_createHook_Info(t *testing.T) {
 
 	info := createHook{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Group: GroupHooks}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Group: GroupHooks, Role: org.RoleEditor}, info.Traits)
 
 	assert.Equal(t, NameCreateHook, info.Name)
 	assert.NotEmpty(t, info.Description)
@@ -764,7 +765,7 @@ func Test_updateHook_Info(t *testing.T) {
 
 	info := updateHook{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Overwrites: true, Group: GroupHooks}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Overwrites: true, Group: GroupHooks, Role: org.RoleEditor}, info.Traits)
 
 	assert.Equal(t, NameUpdateHook, info.Name)
 	assert.NotEmpty(t, info.Description)
@@ -987,7 +988,7 @@ func Test_deleteHook_Info(t *testing.T) {
 
 	info := deleteHook{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Destructive: true, Group: GroupHooks}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Destructive: true, Group: GroupHooks, Role: org.RoleEditor}, info.Traits)
 
 	assert.Equal(t, NameDeleteHook, info.Name)
 	assert.NotEmpty(t, info.Description)

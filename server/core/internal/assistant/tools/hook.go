@@ -12,6 +12,7 @@ import (
 	"github.com/oxynote/oxynote/server/core/internal/document"
 	"github.com/oxynote/oxynote/server/core/internal/document/hook"
 	"github.com/oxynote/oxynote/server/core/internal/document/hook/processor"
+	"github.com/oxynote/oxynote/server/core/internal/org"
 	"github.com/rs/xid"
 )
 
@@ -198,7 +199,7 @@ type listHooks struct{}
 func (listHooks) Info() Info {
 	return Info{
 		Name:        NameListHooks,
-		Traits:      Traits{Group: GroupHooks},
+		Traits:      Traits{Group: GroupHooks, Role: org.RoleViewer},
 		Description: "List the freshness hooks on one branch of a document as [{id, type, block_uid, settings, triggered, state, status, created_at, updated_at}]. A hook watches something outside the document and triggers when that thing changes or a date passes. block_uid is the block it is anchored to, or null for the whole document.",
 		Properties: map[string]any{
 			"document_id": map[string]any{"type": "string", "description": _documentIDDescription},
@@ -318,7 +319,7 @@ type createHook struct{}
 func (createHook) Info() Info {
 	return Info{
 		Name:        NameCreateHook,
-		Traits:      Traits{Group: GroupHooks, Write: true},
+		Traits:      Traits{Group: GroupHooks, Write: true, Role: org.RoleEditor},
 		Description: "Add a freshness hook, such as a review reminder, to one branch of a document and return it as list_hooks would. github-tracking and url-watcher need the deployment's GitHub App and changedetection.io integrations, and are refused without them. A new hook starts untriggered.",
 		Properties: map[string]any{
 			"document_id": map[string]any{"type": "string", "description": _documentIDDescription},
@@ -438,7 +439,7 @@ type updateHook struct{}
 func (updateHook) Info() Info {
 	return Info{
 		Name:        NameUpdateHook,
-		Traits:      Traits{Group: GroupHooks, Write: true, Overwrites: true},
+		Traits:      Traits{Group: GroupHooks, Write: true, Overwrites: true, Role: org.RoleEditor},
 		Description: "Reset a hook's state to a fresh hook's and return it as list_hooks would. It is then untriggered, except a reminder already past its schedule, which stays triggered until settings give it a later one. Without settings the hook keeps them: use that once the document is brought up to date with what the hook flagged. With settings they replace the old ones; the hook keeps its type, so to change it delete the hook and create another.",
 		Properties: map[string]any{
 			"document_id": map[string]any{"type": "string", "description": _documentIDDescription},
@@ -545,7 +546,7 @@ type deleteHook struct{}
 func (deleteHook) Info() Info {
 	return Info{
 		Name:        NameDeleteHook,
-		Traits:      Traits{Group: GroupHooks, Write: true, Destructive: true},
+		Traits:      Traits{Group: GroupHooks, Write: true, Destructive: true, Role: org.RoleEditor},
 		Description: "Delete a hook, tearing down whatever it watches outside the document. A protected branch keeps its hooks. It cannot be restored; update_hook without settings clears what it flagged instead. Returns {hook_id, deleted}.",
 		Properties: map[string]any{
 			"document_id": map[string]any{"type": "string", "description": _documentIDDescription},

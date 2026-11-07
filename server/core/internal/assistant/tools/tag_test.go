@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/guregu/null/v5"
+	"github.com/oxynote/oxynote/server/core/internal/org"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
 	"github.com/oxynote/oxynote/server/core/pkg/errutil"
 	"github.com/oxynote/oxynote/server/core/pkg/testutil"
@@ -41,7 +42,7 @@ func Test_listTags_Info(t *testing.T) {
 
 	info := listTags{}.Info()
 
-	assert.Equal(t, Traits{Group: GroupTags}, info.Traits)
+	assert.Equal(t, Traits{Group: GroupTags, Role: org.RoleViewer}, info.Traits)
 
 	assert.Equal(t, NameListTags, info.Name)
 	assert.NotEmpty(t, info.Description)
@@ -170,7 +171,7 @@ func Test_createTag_Info(t *testing.T) {
 
 	info := createTag{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Group: GroupTags}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Group: GroupTags, Role: org.RoleEditor}, info.Traits)
 
 	assert.Equal(t, NameCreateTag, info.Name)
 	assert.NotEmpty(t, info.Description)
@@ -344,7 +345,7 @@ func Test_updateTag_Info(t *testing.T) {
 
 	info := updateTag{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Idempotent: true, Group: GroupTags}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Idempotent: true, Group: GroupTags, Role: org.RoleEditor}, info.Traits)
 
 	assert.Equal(t, NameUpdateTag, info.Name)
 	assert.NotEmpty(t, info.Description)
@@ -648,7 +649,7 @@ func Test_deleteTag_Info(t *testing.T) {
 	info := deleteTag{}.Info()
 
 	// a delete stays outside any "approve all" answer.
-	assert.Equal(t, Traits{Write: true, Destructive: true, Group: GroupTags}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Destructive: true, Group: GroupTags, Role: org.RoleEditor}, info.Traits)
 
 	assert.Equal(t, NameDeleteTag, info.Name)
 	assert.Contains(t, info.Description, "cannot be restored")
@@ -821,7 +822,7 @@ func Test_setTagAssignment_Info(t *testing.T) {
 
 	info := setTagAssignment{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Idempotent: true, Group: GroupTags}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Idempotent: true, Group: GroupTags, Role: org.RoleEditor}, info.Traits)
 
 	assert.Equal(t, NameSetTagAssignment, info.Name)
 	assert.NotEmpty(t, info.Description)

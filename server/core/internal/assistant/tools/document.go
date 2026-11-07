@@ -10,6 +10,7 @@ import (
 	"github.com/oxynote/oxynote/server/core/internal/assistant/icon"
 	"github.com/oxynote/oxynote/server/core/internal/assistant/markup"
 	"github.com/oxynote/oxynote/server/core/internal/document"
+	"github.com/oxynote/oxynote/server/core/internal/org"
 	"github.com/rs/xid"
 )
 
@@ -35,6 +36,7 @@ type listDocuments struct{}
 func (listDocuments) Info() Info {
 	return Info{
 		Name:        NameListDocuments,
+		Traits:      Traits{Role: org.RoleViewer},
 		Description: "List the organisation's documents as a tree of {id, name, branches: [{id, name, protected, default}], children}. parent_id narrows it to that document's children. search_documents finds a document by title or content.",
 		Properties: map[string]any{
 			"parent_id": map[string]any{"type": "string", "description": "Optional. A document whose direct children to list; omit it for the whole tree."},
@@ -117,6 +119,7 @@ type getDocument struct{}
 func (getDocument) Info() Info {
 	return Info{
 		Name:        NameGetDocument,
+		Traits:      Traits{Role: org.RoleViewer},
 		Description: "Read one document on one branch: its name, icon, parent_id and updated_at, every branch it has as {id, name, protected, default, updated_at}, the tags on the branch read, and content: its blocks as XML, one element per block with its id, in the format insert_blocks describes. Read a document this way before editing it.",
 		Properties: map[string]any{
 			"document_id": map[string]any{"type": "string", "description": _documentIDDescription},
@@ -313,7 +316,7 @@ func (a createDocumentArgs) input() document.CreateInput {
 func (createDocument) Info() Info {
 	return Info{
 		Name:        NameCreateDocument,
-		Traits:      Traits{Write: true},
+		Traits:      Traits{Write: true, Role: org.RoleEditor},
 		Description: "Create a document and return {document_id, branch_id}, the branch_id being its default branch. It starts with one empty paragraph; fill it with insert_blocks at position end on that branch.",
 		Properties: map[string]any{
 			"name":            map[string]any{"type": "string", "description": "The display name."},
@@ -385,7 +388,7 @@ type deleteDocument struct{}
 func (deleteDocument) Info() Info {
 	return Info{
 		Name:        NameDeleteDocument,
-		Traits:      Traits{Write: true, Destructive: true},
+		Traits:      Traits{Write: true, Destructive: true, Role: org.RoleEditor},
 		Description: "Delete a document and every document nested under it. The whole subtree goes and cannot be restored, so check the tree with list_documents first, and use update_document when the aim is to relocate rather than remove. Returns {document_id, deleted}.",
 		Properties:  map[string]any{"document_id": map[string]any{"type": "string", "description": _documentIDDescription}},
 		Required:    []string{"document_id"},
@@ -536,7 +539,7 @@ type updateDocument struct{}
 func (updateDocument) Info() Info {
 	return Info{
 		Name:        NameUpdateDocument,
-		Traits:      Traits{Write: true, Idempotent: true},
+		Traits:      Traits{Write: true, Idempotent: true, Role: org.RoleEditor},
 		Description: "Change a document's name, icon or parent; give only what changes, and a call changing nothing is refused. Content is untouched, and a parent that is the document itself or one of its descendants is refused. Returns {document_id} with what changed.",
 		Properties: map[string]any{
 			"document_id":     map[string]any{"type": "string", "description": _documentIDDescription},

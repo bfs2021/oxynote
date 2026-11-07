@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/guregu/null/v5"
+	"github.com/oxynote/oxynote/server/core/internal/org"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
 	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/rs/xid"
@@ -35,7 +36,7 @@ type listVariables struct{}
 func (listVariables) Info() Info {
 	return Info{
 		Name:        NameListVariables,
-		Traits:      Traits{Group: GroupVariables},
+		Traits:      Traits{Group: GroupVariables, Role: org.RoleViewer},
 		Description: "List the global variables by group as [{id, name, color, builtin, variables: [{id, key, name, description, type, builtin, default, value, options}]}]. Queries and metrics reference a variable as $key, so one change updates every metric using it; each user picks their own. default is what anyone without their own sees; for a list, its first option's id. value is the user's own, or null. A built-in's definition cannot change; set_variable_value sets its value or default.",
 		Properties:  map[string]any{},
 	}
@@ -191,7 +192,7 @@ type createVariableGroup struct{}
 func (createVariableGroup) Info() Info {
 	return Info{
 		Name:        NameCreateVariableGroup,
-		Traits:      Traits{Group: GroupVariables, Write: true},
+		Traits:      Traits{Group: GroupVariables, Write: true, Role: org.RoleEditor},
 		Description: "Create a variable group, last in order, and return {group_id}. The name has to be unused.",
 		Properties: map[string]any{
 			"name":  map[string]any{"type": "string", "description": "The display name."},
@@ -287,7 +288,7 @@ type updateVariableGroup struct{}
 func (updateVariableGroup) Info() Info {
 	return Info{
 		Name:        NameUpdateVariableGroup,
-		Traits:      Traits{Group: GroupVariables, Write: true, Idempotent: true},
+		Traits:      Traits{Group: GroupVariables, Write: true, Idempotent: true, Role: org.RoleEditor},
 		Description: "Rename or recolour a variable group other than the built-in one; give only what changes. Returns {group_id}.",
 		Properties: map[string]any{
 			"group_id": map[string]any{"type": "string", "description": _variableGroupIDDescription},
@@ -364,7 +365,7 @@ type deleteVariableGroup struct{}
 func (deleteVariableGroup) Info() Info {
 	return Info{
 		Name:        NameDeleteVariableGroup,
-		Traits:      Traits{Group: GroupVariables, Write: true, Destructive: true},
+		Traits:      Traits{Group: GroupVariables, Write: true, Destructive: true, Role: org.RoleEditor},
 		Description: "Delete an empty variable group other than the built-in one. Returns {group_id, deleted}.",
 		Properties: map[string]any{
 			"group_id": map[string]any{"type": "string", "description": _variableGroupIDDescription},
@@ -490,7 +491,7 @@ type createVariable struct{}
 func (createVariable) Info() Info {
 	return Info{
 		Name:        NameCreateVariable,
-		Traits:      Traits{Group: GroupVariables, Write: true},
+		Traits:      Traits{Group: GroupVariables, Write: true, Role: org.RoleEditor},
 		Description: "Create a global variable, last in its group, and return {variable_id}. The key has to be unused and match ^[a-z][a-z0-9_]*$. A list takes options, the first being the default; other types take a default instead, required for a time range.",
 		Properties: map[string]any{
 			"group_id":    map[string]any{"type": "string", "description": _variableGroupIDDescription},
@@ -588,6 +589,17 @@ func (a updateVariableArgs) Validate() error {
 	return nil
 }
 
+// onlyDefault reports whether the arguments change nothing but the
+// default.
+func (a updateVariableArgs) onlyDefault() bool {
+	return a.GroupID.IsNil() &&
+		a.Key == "" &&
+		a.Name == "" &&
+		!a.Description.Valid &&
+		a.Type == "" &&
+		a.Options == nil
+}
+
 // input returns the variable's definition with the given fields laid
 // over the current one. A type change drops what only the old type had:
 // the options of a list and the default of anything else.
@@ -645,8 +657,8 @@ type updateVariable struct{}
 func (updateVariable) Info() Info {
 	return Info{
 		Name:        NameUpdateVariable,
-		Traits:      Traits{Group: GroupVariables, Write: true, Overwrites: true, Idempotent: true},
-		Description: "Change a global variable other than a built-in one, whose default set_variable_value sets; give only what changes. group_id moves it to the end of that group. options replace a list's; users who picked a removed value see the default again. A type change resets everyone's value. Returns {variable_id}.",
+		Traits:      Traits{Group: GroupVariables, Write: true, Overwrites: true, Idempotent: true, Role: org.RoleEditor},
+		Description: "Change a global variable; give only what changes, and for a built-in one only default. group_id moves it to the end of that group. options replace a list's; users who picked a removed value see the default again. A type change resets everyone's value. Returns {variable_id}.",
 		Properties: map[string]any{
 			"variable_id": map[string]any{"type": "string", "description": _variableIDDescription},
 			"group_id":    map[string]any{"type": "string", "description": "Optional. Moves it to the end of this group."},
@@ -654,7 +666,7 @@ func (updateVariable) Info() Info {
 			"name":        map[string]any{"type": "string", "description": "Optional. The new display name."},
 			"description": map[string]any{"type": "string", "description": "Optional. Empty clears it."},
 			"type":        map[string]any{"type": "string", "enum": _variableTypes, "description": "Optional. The new kind of value."},
-			"default":     map[string]any{"type": "string", "description": "Optional. " + _variableDefaultDescription},
+			"default":     map[string]any{"type": "string", "description": "Optional. What everyone sees until they set their own: a decimal, a time range preset or text. Not for a list, except a built-in one, which takes an option id."},
 			"options":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional. A list's option values in order."},
 		},
 		Required: []string{"variable_id"},
@@ -699,6 +711,19 @@ func (updateVariable) Execute(inp *input) (string, error) {
 		return "", err
 	}
 
+	// only a built-in variable's default can change, and only on its own.
+	if current.Builtin {
+		if !in.Default.Valid || !in.onlyDefault() {
+			return "", variable.ErrBuiltinVariable
+		}
+
+		if err = inp.SetVariableDefault(in.VariableID, in.Default.String); err != nil {
+			return "", err
+		}
+
+		return result(variableResult{VariableID: in.VariableID})
+	}
+
 	if err = inp.UpdateVariable(in.VariableID, in.input(*current)); err != nil {
 		return "", err
 	}
@@ -728,7 +753,7 @@ type deleteVariable struct{}
 func (deleteVariable) Info() Info {
 	return Info{
 		Name:        NameDeleteVariable,
-		Traits:      Traits{Group: GroupVariables, Write: true, Destructive: true},
+		Traits:      Traits{Group: GroupVariables, Write: true, Destructive: true, Role: org.RoleEditor},
 		Description: "Delete a global variable other than a built-in one, with everyone's value. Returns {variable_id, deleted}.",
 		Properties: map[string]any{
 			"variable_id": map[string]any{"type": "string", "description": _variableIDDescription},
@@ -785,43 +810,43 @@ type setVariableValueArgs struct {
 	// VariableID names the variable.
 	VariableID xid.ID `json:"variable_id"`
 
-	// Value is the new value. Required, though text may be empty.
+	// Value is the new value. Required unless Default, and text may be empty.
 	Value null.String `json:"value"`
 
-	// Default sets the organisation's default instead of the user's own
-	// value.
+	// Default resets the user's own value, so they see the default again.
 	Default bool `json:"default"`
 }
 
-// Validate checks the arguments name a variable and give a value.
+// Validate checks the arguments name a variable and give a value, unless
+// they reset it.
 func (a setVariableValueArgs) Validate() error {
 	if a.VariableID.IsNil() {
 		return errRequired("variable_id")
 	}
 
-	if !a.Value.Valid {
+	if !a.Value.Valid && !a.Default {
 		return errRequired("value")
 	}
 
 	return nil
 }
 
-// setVariableValue sets the current user's own value of a variable, or
-// its organisation-wide default.
+// setVariableValue sets or resets the current user's own value of a
+// variable. The organisation-wide default is update_variable's.
 type setVariableValue struct{}
 
 // Info returns the tool's model-facing description.
 func (setVariableValue) Info() Info {
 	return Info{
 		Name:        NameSetVariableValue,
-		Traits:      Traits{Group: GroupVariables, Write: true, Idempotent: true},
-		Description: "Set the current user's own value of a global variable, built-ins included, or with default its organisation-wide default; prefer the user's own. Set metric_range to show every chart another period. A list takes an option id, a number a decimal, a time range a preset such as last_24_hours, text anything. Returns {variable_id, value, default}.",
+		Traits:      Traits{Group: GroupVariables, Write: true, Idempotent: true, Role: org.RoleViewer},
+		Description: "Set the current user's own value of a global variable, built-ins included, or with default reset it to the default. Set metric_range to show every chart another period. A list takes an option id, a number a decimal, a time range a preset such as last_24_hours, text anything. Returns {variable_id, value, default}.",
 		Properties: map[string]any{
 			"variable_id": map[string]any{"type": "string", "description": _variableIDDescription},
-			"value":       map[string]any{"type": "string", "description": "The new value."},
-			"default":     map[string]any{"type": "boolean", "description": "Optional. True sets what everyone without their own value sees."},
+			"value":       map[string]any{"type": "string", "description": "The new value. Required unless default."},
+			"default":     map[string]any{"type": "boolean", "description": "Optional. True resets the user's own value to the default."},
 		},
-		Required: []string{"variable_id", "value"},
+		Required: []string{"variable_id"},
 	}
 }
 
@@ -849,7 +874,7 @@ func (setVariableValue) Summary(inp DescribeInput) (ActionSummary, error) {
 
 	summary := fmt.Sprintf("Set your $%s to %q", v.Key, value)
 	if in.Default {
-		summary = fmt.Sprintf("Set the default of $%s to %q", v.Key, value)
+		summary = fmt.Sprintf("Reset your $%s to the default", v.Key)
 	}
 
 	return ActionSummary{
@@ -858,7 +883,7 @@ func (setVariableValue) Summary(inp DescribeInput) (ActionSummary, error) {
 	}, nil
 }
 
-// Execute sets the value or the default.
+// Execute sets the user's own value, or resets it to the default.
 func (setVariableValue) Execute(inp *input) (string, error) {
 	var in setVariableValueArgs
 
@@ -866,12 +891,15 @@ func (setVariableValue) Execute(inp *input) (string, error) {
 		return "", err
 	}
 
-	set := inp.SetVariableValue
 	if in.Default {
-		set = inp.SetVariableDefault
+		if err := inp.ResetVariableValue(in.VariableID); err != nil {
+			return "", err
+		}
+
+		return result(setVariableValueResult{VariableID: in.VariableID, Default: true})
 	}
 
-	if err := set(in.VariableID, in.Value.String); err != nil {
+	if err := inp.SetVariableValue(in.VariableID, in.Value.String); err != nil {
 		return "", err
 	}
 

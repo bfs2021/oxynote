@@ -2,12 +2,14 @@ package tools
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/guregu/null/v5"
+	"github.com/oxynote/oxynote/server/core/internal/org"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
 	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/oxynote/oxynote/server/core/pkg/errutil"
@@ -127,7 +129,7 @@ func Test_listVariables_Info(t *testing.T) {
 
 	info := listVariables{}.Info()
 
-	assert.Equal(t, Traits{Group: GroupVariables}, info.Traits)
+	assert.Equal(t, Traits{Group: GroupVariables, Role: org.RoleViewer}, info.Traits)
 	assert.Equal(t, NameListVariables, info.Name)
 	assert.NotEmpty(t, info.Description)
 	assert.Empty(t, info.Properties)
@@ -235,7 +237,7 @@ func Test_createVariableGroup_Info(t *testing.T) {
 
 	info := createVariableGroup{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Group: GroupVariables}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Group: GroupVariables, Role: org.RoleEditor}, info.Traits)
 	assert.Equal(t, NameCreateVariableGroup, info.Name)
 	assert.NotEmpty(t, info.Description)
 	assert.Equal(t, []string{"name", "color"}, info.Required)
@@ -389,7 +391,7 @@ func Test_updateVariableGroup_Info(t *testing.T) {
 
 	info := updateVariableGroup{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Idempotent: true, Group: GroupVariables}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Idempotent: true, Group: GroupVariables, Role: org.RoleEditor}, info.Traits)
 	assert.Equal(t, NameUpdateVariableGroup, info.Name)
 	assert.NotEmpty(t, info.Description)
 	assert.Equal(t, []string{"group_id"}, info.Required)
@@ -526,7 +528,7 @@ func Test_deleteVariableGroup_Info(t *testing.T) {
 
 	info := deleteVariableGroup{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Destructive: true, Group: GroupVariables}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Destructive: true, Group: GroupVariables, Role: org.RoleEditor}, info.Traits)
 	assert.Equal(t, NameDeleteVariableGroup, info.Name)
 	assert.NotEmpty(t, info.Description)
 	assert.Equal(t, []string{"group_id"}, info.Required)
@@ -711,7 +713,7 @@ func Test_createVariable_Info(t *testing.T) {
 
 	info := createVariable{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Group: GroupVariables}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Group: GroupVariables, Role: org.RoleEditor}, info.Traits)
 	assert.Equal(t, NameCreateVariable, info.Name)
 	assert.NotEmpty(t, info.Description)
 	assert.Equal(t, []string{"group_id", "key", "name", "type"}, info.Required)
@@ -946,7 +948,7 @@ func Test_updateVariable_Info(t *testing.T) {
 
 	info := updateVariable{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Overwrites: true, Idempotent: true, Group: GroupVariables}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Overwrites: true, Idempotent: true, Group: GroupVariables, Role: org.RoleEditor}, info.Traits)
 	assert.Equal(t, NameUpdateVariable, info.Name)
 	assert.NotEmpty(t, info.Description)
 	assert.Equal(t, []string{"variable_id"}, info.Required)
@@ -1026,9 +1028,44 @@ func Test_updateVariable_Execute(t *testing.T) {
 		Args                string
 		FetchTreeCalls      int
 		UpdateVariableCalls int
+		DefaultCalls        int
 		Err                 error
 	}{
 		"Malformed arguments": {Man: stubVariableManager(), Args: `{`, Err: assert.AnError},
+		// a built-in variable's default is the one thing that changes on
+		// it, so it goes straight to the default.
+		"Built-in variable's default": {
+			Man:            stubVariableManager(),
+			Args:           `{"variable_id":"` + _builtinVariableID.String() + `","default":"last_7_days"}`,
+			FetchTreeCalls: 1,
+			DefaultCalls:   1,
+		},
+		"Error returned by VariableManager.SetDefaultValue": {
+			Man: func() *VariableManagerMock {
+				m := stubVariableManager()
+				m.SetDefaultValueFunc = func(context.Context, xid.ID, string, string) error {
+					return variable.ErrInvalidTimeRange
+				}
+
+				return m
+			}(),
+			Args:           `{"variable_id":"` + _builtinVariableID.String() + `","default":"bogus"}`,
+			FetchTreeCalls: 1,
+			DefaultCalls:   1,
+			Err:            variable.ErrInvalidTimeRange,
+		},
+		"Built-in variable's default with another change": {
+			Man:            stubVariableManager(),
+			Args:           `{"variable_id":"` + _builtinVariableID.String() + `","name":"Range","default":"last_7_days"}`,
+			FetchTreeCalls: 1,
+			Err:            variable.ErrBuiltinVariable,
+		},
+		"Built-in variable without a default": {
+			Man:            stubVariableManager(),
+			Args:           `{"variable_id":"` + _builtinVariableID.String() + `","name":"Range"}`,
+			FetchTreeCalls: 1,
+			Err:            variable.ErrBuiltinVariable,
+		},
 		"Unknown variable": {
 			Man:            stubVariableManager(),
 			Args:           `{"variable_id":"` + _unknownVariableID.String() + `"}`,
@@ -1062,7 +1099,22 @@ func Test_updateVariable_Execute(t *testing.T) {
 			ff := c.Man.UpdateVariableCalls()
 			require.Len(t, ff, c.UpdateVariableCalls)
 
+			dd := c.Man.SetDefaultValueCalls()
+			require.Len(t, dd, c.DefaultCalls)
+
+			for _, d := range dd {
+				assert.Equal(t, _builtinVariableID, d.ID)
+				assert.Equal(t, "org", d.OrganizationID)
+			}
+
 			if err != nil {
+				return
+			}
+
+			if c.DefaultCalls > 0 {
+				assert.JSONEq(t, `{"variable_id":"`+_builtinVariableID.String()+`"}`, res)
+				assert.Equal(t, "last_7_days", dd[0].Value)
+
 				return
 			}
 
@@ -1104,7 +1156,7 @@ func Test_deleteVariable_Info(t *testing.T) {
 
 	info := deleteVariable{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Destructive: true, Group: GroupVariables}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Destructive: true, Group: GroupVariables, Role: org.RoleEditor}, info.Traits)
 	assert.Equal(t, NameDeleteVariable, info.Name)
 	assert.NotEmpty(t, info.Description)
 	assert.Equal(t, []string{"variable_id"}, info.Required)
@@ -1210,8 +1262,8 @@ func Test_setVariableValueArgs_Validate(t *testing.T) {
 			Args: setVariableValueArgs{VariableID: _testVariableID},
 			Err:  errors.New("value is required"),
 		},
-		"Empty default": {
-			Args: setVariableValueArgs{VariableID: _testVariableID, Value: null.StringFrom(""), Default: true},
+		"Reset without a value": {
+			Args: setVariableValueArgs{VariableID: _testVariableID, Default: true},
 		},
 	}
 
@@ -1229,10 +1281,10 @@ func Test_setVariableValue_Info(t *testing.T) {
 
 	info := setVariableValue{}.Info()
 
-	assert.Equal(t, Traits{Write: true, Idempotent: true, Group: GroupVariables}, info.Traits)
+	assert.Equal(t, Traits{Write: true, Idempotent: true, Group: GroupVariables, Role: org.RoleViewer}, info.Traits)
 	assert.Equal(t, NameSetVariableValue, info.Name)
 	assert.NotEmpty(t, info.Description)
-	assert.Equal(t, []string{"variable_id", "value"}, info.Required)
+	assert.Equal(t, []string{"variable_id"}, info.Required)
 }
 
 func Test_setVariableValue_Summary(t *testing.T) {
@@ -1260,10 +1312,10 @@ func Test_setVariableValue_Summary(t *testing.T) {
 			FetchTreeCalls: 1,
 			Result:         `Set your $metric_range to "last_1_hour"`,
 		},
-		"Default": {
-			Args:           `{"variable_id":"` + _builtinVariableID.String() + `","value":"last_7_days","default":true}`,
+		"Reset": {
+			Args:           `{"variable_id":"` + _builtinVariableID.String() + `","default":true}`,
 			FetchTreeCalls: 1,
-			Result:         `Set the default of $metric_range to "last_7_days"`,
+			Result:         "Reset your $metric_range to the default",
 		},
 	}
 
@@ -1291,12 +1343,12 @@ func Test_setVariableValue_Execute(t *testing.T) {
 	t.Parallel()
 
 	cc := map[string]struct {
-		Man          *VariableManagerMock
-		Args         string
-		ValueCalls   int
-		DefaultCalls int
-		Result       string
-		Err          error
+		Man        *VariableManagerMock
+		Args       string
+		ValueCalls int
+		ResetCalls int
+		Result     string
+		Err        error
 	}{
 		"Malformed arguments": {Man: stubVariableManager(), Args: `{`, Err: assert.AnError},
 		"Invalid value": {
@@ -1309,15 +1361,15 @@ func Test_setVariableValue_Execute(t *testing.T) {
 			ValueCalls: 1,
 			Err:        variable.ErrInvalidTimeRange,
 		},
-		"Invalid default": {
+		"Unknown variable reset": {
 			Man: &VariableManagerMock{
-				SetDefaultValueFunc: func(context.Context, xid.ID, string, string) error {
-					return variable.ErrInvalidTimeRange
+				ResetValueFunc: func(context.Context, xid.ID, string, string) error {
+					return sql.ErrNoRows
 				},
 			},
-			Args:         `{"variable_id":"` + _builtinVariableID.String() + `","value":"last_1_hour","default":true}`,
-			DefaultCalls: 1,
-			Err:          variable.ErrInvalidTimeRange,
+			Args:       `{"variable_id":"` + _builtinVariableID.String() + `","default":true}`,
+			ResetCalls: 1,
+			Err:        assert.AnError,
 		},
 		"Set": {
 			Man:        stubVariableManager(),
@@ -1325,11 +1377,12 @@ func Test_setVariableValue_Execute(t *testing.T) {
 			ValueCalls: 1,
 			Result:     `{"variable_id":"` + _builtinVariableID.String() + `","value":"last_1_hour","default":false}`,
 		},
-		"Set the default": {
-			Man:          stubVariableManager(),
-			Args:         `{"variable_id":"` + _builtinVariableID.String() + `","value":"last_1_hour","default":true}`,
-			DefaultCalls: 1,
-			Result:       `{"variable_id":"` + _builtinVariableID.String() + `","value":"last_1_hour","default":true}`,
+		// a reset needs no value: the user sees the default again.
+		"Reset to the default": {
+			Man:        stubVariableManager(),
+			Args:       `{"variable_id":"` + _builtinVariableID.String() + `","default":true}`,
+			ResetCalls: 1,
+			Result:     `{"variable_id":"` + _builtinVariableID.String() + `","value":"","default":true}`,
 		},
 	}
 
@@ -1343,8 +1396,11 @@ func Test_setVariableValue_Execute(t *testing.T) {
 			vv := c.Man.SetValueCalls()
 			require.Len(t, vv, c.ValueCalls)
 
-			dd := c.Man.SetDefaultValueCalls()
-			require.Len(t, dd, c.DefaultCalls)
+			rr := c.Man.ResetValueCalls()
+			require.Len(t, rr, c.ResetCalls)
+
+			// setting a default is update_variable's.
+			assert.Empty(t, c.Man.SetDefaultValueCalls())
 
 			if err != nil {
 				return
@@ -1359,10 +1415,10 @@ func Test_setVariableValue_Execute(t *testing.T) {
 				assert.Equal(t, "user", v.UserID)
 			}
 
-			for _, d := range dd {
-				assert.Equal(t, _builtinVariableID, d.ID)
-				assert.Equal(t, "last_1_hour", d.Value)
-				assert.Equal(t, "org", d.OrganizationID)
+			for _, r := range rr {
+				assert.Equal(t, _builtinVariableID, r.ID)
+				assert.Equal(t, "org", r.OrganizationID)
+				assert.Equal(t, "user", r.UserID)
 			}
 		})
 	}
