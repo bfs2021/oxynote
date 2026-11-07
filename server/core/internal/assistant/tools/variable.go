@@ -37,7 +37,7 @@ func (listVariables) Info() Info {
 	return Info{
 		Name:        NameListVariables,
 		Traits:      Traits{Group: GroupVariables, Role: org.RoleViewer},
-		Description: "List the global variables by group as [{id, name, color, builtin, variables: [{id, key, name, description, type, builtin, default, value, options}]}]. Queries and metrics reference a variable as $key, so one change updates every metric using it; each user picks their own. default is what anyone without their own sees; for a list, its first option's id. value is the user's own, or null. A built-in's definition cannot change; set_variable_value sets its value or default.",
+		Description: "List the global variables by group as [{id, name, color, builtin, variables: [{id, key, name, description, type, builtin, default, value, options}]}]. Queries and metrics reference a variable as $key, so one change updates every metric using it; each user picks their own. default is what anyone without their own sees; for a list, its first option's id. value is the user's own, or null. A built-in's definition cannot change; set_variable_value sets the user's own value of it, and update_variable its default.",
 		Properties:  map[string]any{},
 	}
 }
@@ -914,6 +914,6 @@ type setVariableValueResult struct {
 	// Value is the new value.
 	Value string `json:"value"`
 
-	// Default indicates the organisation's default was set.
+	// Default indicates the user's own value was reset to the default.
 	Default bool `json:"default"`
 }
